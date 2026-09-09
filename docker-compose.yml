@@ -1,0 +1,60 @@
+# Local dev: `cp .env.example .env` then `docker compose up --build`.
+# Four services, matching docs/spec.md section 10:
+#   db      Postgres 16 + PostGIS + pgvector
+#   redis   Celery broker
+#   backend FastAPI, auto-reloading on code changes (http://localhost:8000, docs at /docs)
+#   worker  Celery worker (registers no tasks yet — arrives in a later phase)
+
+services:
+  db:
+    build: ./backend/docker/postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  worker:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    command: ["celery", "-A", "app.celery_app.celery_app", "worker", "--loglevel=info"]
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+volumes:
+  db_data:
